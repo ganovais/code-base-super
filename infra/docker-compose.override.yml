@@ -1,0 +1,25 @@
+services:
+  ms-auth:
+    command: ["pnpm", "run", "start:dev"]
+    volumes:
+      - ../ms-auth:/app
+      - /app/node_modules
+
+  task-api:
+    command: ["pnpm", "run", "start:dev"]
+    volumes:
+      - ../task-api:/app
+      - /app/node_modules
+
+  api-gateway:
+    command: ["npm", "run", "start:dev"]
+    volumes:
+      - ../gateway:/app
+      - /app/node_modules
+
+  frontend:
+    command: ["pnpm", "run", "dev"]
+    volumes:
+      - ../next-frontend:/app
+      - /app/node_modules
+      - /app/.next

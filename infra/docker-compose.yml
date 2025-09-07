@@ -1,0 +1,193 @@
+services:
+  # PostgreSQL for Authentication Service
+  auth-db:
+    image: postgres:17-alpine
+    container_name: auth-db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # PostgreSQL for Task Service
+  tasks-db:
+    image: postgres:17-alpine
+    container_name: tasks-db
+    environment:
+      POSTGRES_DB: tasks_db
+      POSTGRES_USER: tasks_user
+      POSTGRES_PASSWORD: tasks_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - tasks_db_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasks_user -d tasks_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --requirepass redis123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Authentication Service
+  ms-auth:
+    build:
+      context: ../ms-auth
+      dockerfile: Dockerfile
+    container_name: ms-auth
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://auth_user:auth_password@auth-db:5432/auth_db
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      REDIS_URL: redis://:redis123@redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production
+      JWT_EXPIRES_IN: 24h
+    ports:
+      - "3001:3001"
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    volumes:
+      - ../ms-auth:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+  # Task Service
+  task-api:
+    build:
+      context: ../task-api
+      dockerfile: Dockerfile
+    container_name: task-api
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DATABASE_URL: postgresql://tasks_user:tasks_password@tasks-db:5432/tasks_db
+      RABBITMQ_URL: amqp://admin:admin123@rabbitmq:5672
+      REDIS_URL: redis://:redis123@redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production
+    ports:
+      - "3002:3002"
+    depends_on:
+      tasks-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    volumes:
+      - ../task-api:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ../gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      MS_AUTH_URL: http://ms-auth:3001
+      TASK_API_URL: http://task-api:3002
+      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production
+      REDIS_URL: redis://:redis123@redis:6379
+    ports:
+      - "3000:3000"
+    depends_on:
+      - ms-auth
+      - task-api
+      - redis
+    networks:
+      - microservices-network
+    volumes:
+      - ../gateway:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ../next-frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3000/api
+    ports:
+      - "3003:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - microservices-network
+    volumes:
+      - ../next-frontend:/app
+      - /app/node_modules
+      - /app/.next
+    restart: unless-stopped
+
+networks:
+  microservices-network:
+    driver: bridge
+
+volumes:
+  auth_db_data:
+  tasks_db_data:
+  rabbitmq_data:
+  redis_data:
